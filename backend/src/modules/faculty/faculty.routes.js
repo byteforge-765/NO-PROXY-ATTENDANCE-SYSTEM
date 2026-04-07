@@ -1,0 +1,11 @@
+const router=require('express').Router();
+const ctrl=require('./faculty.controller');
+const {authenticate,authorise}=require('../../middleware/auth');
+const {uploadPhoto}=require('../../middleware/upload');
+router.use(authenticate);
+router.get('/',authorise(['admin','faculty']),ctrl.getAll);
+router.get('/:id',ctrl.getOne);
+router.post('/',authorise(['admin']),uploadPhoto.single('photo'),ctrl.create);
+router.put('/:id',authorise(['admin']),uploadPhoto.single('photo'),ctrl.update);
+router.delete('/:id',authorise(['admin']),ctrl.remove);
+module.exports=router;

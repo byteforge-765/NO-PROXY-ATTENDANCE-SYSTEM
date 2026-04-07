@@ -1,0 +1,10 @@
+const router=require('express').Router();
+const ctrl=require('./department.controller');
+const {authenticate,authorise}=require('../../middleware/auth');
+router.use(authenticate);
+router.get('/',ctrl.getAll);
+router.get('/:id',ctrl.getOne);
+router.post('/',authorise(['admin']),ctrl.create);
+router.put('/:id',authorise(['admin']),ctrl.update);
+router.delete('/:id',authorise(['admin']),ctrl.remove);
+module.exports=router;

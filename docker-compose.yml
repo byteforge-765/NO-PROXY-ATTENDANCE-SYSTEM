@@ -1,0 +1,137 @@
+version: "3.9"
+
+# ════════════════════════════════════════════════════════════════
+#  ICMS — Full Stack with TigerGraph
+#  Usage:
+#    docker-compose up -d              # Start all services
+#    docker-compose up tigergraph -d   # Start only TigerGraph
+#    docker-compose logs -f backend    # View backend logs
+# ════════════════════════════════════════════════════════════════
+
+services:
+
+  # ── PostgreSQL ────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: icms_postgres
+    environment:
+      POSTGRES_DB:       icms
+      POSTGRES_USER:     icms_user
+      POSTGRES_PASSWORD: icms123
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U icms_user -d icms"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── MongoDB ───────────────────────────────────────────────────
+  mongo:
+    image: mongo:7
+    container_name: icms_mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodata:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.runCommand('ping').ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── Redis (OTP cache) ─────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: icms_redis
+    ports:
+      - "6379:6379"
+    command: redis-server --save "" --appendonly no
+
+  # ── TigerGraph (Graph DB — Attendance Analytics + Proxy Detection) ──
+  # NOTE: TigerGraph requires a license for production use.
+  #       Free Developer Edition: https://dl.tigergraph.com/
+  #       For local dev, use tigergraph/tigergraph:3.9.3
+  tigergraph:
+    image: tigergraph/tigergraph:3.9.3
+    container_name: icms_tigergraph
+    ports:
+      - "14240:14240"   # RESTPP / Web UI
+      - "9000:9000"     # REST API
+      - "14241:14241"   # GSQL Port
+    environment:
+      - TG_LICENSE_KEY=${TG_LICENSE_KEY:-}
+    volumes:
+      - tgdata:/home/tigergraph/tigergraph/data
+    ulimits:
+      nofile:
+        soft: 1000000
+        hard: 1000000
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:14240/echo || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s    # TigerGraph takes ~2 min to start
+
+  # ── Node.js Backend ───────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: icms_backend
+    env_file: ./backend/.env
+    environment:
+      POSTGRES_HOST:         postgres
+      POSTGRES_PORT:         "5432"
+      POSTGRES_DB:           icms
+      POSTGRES_USER:         icms_user
+      POSTGRES_PASSWORD:     icms123
+      MONGO_URI:             mongodb://mongo:27017/icms
+      REDIS_HOST:            redis
+      REDIS_PORT:            "6379"
+      TIGERGRAPH_HOST:       http://tigergraph
+      TIGERGRAPH_PORT:       "14240"
+      TIGERGRAPH_GRAPH:      ICMS
+      TIGERGRAPH_USER:       tigergraph
+      TIGERGRAPH_PASSWORD:   tigergraph123
+      AI_SERVICE_URL:        http://ai-service:8001
+    ports:
+      - "5001:5001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      tigergraph:
+        condition: service_started    # Don't wait for full TG start
+    volumes:
+      - ./backend/src/uploads:/app/src/uploads
+
+  # ── Python AI Service ─────────────────────────────────────────
+  ai-service:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    container_name: icms_ai
+    environment:
+      POSTGRES_HOST:     postgres
+      POSTGRES_PORT:     "5432"
+      POSTGRES_DB:       icms
+      POSTGRES_USER:     icms_user
+      POSTGRES_PASSWORD: icms123
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  mongodata:
+  tgdata:
